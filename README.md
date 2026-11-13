@@ -2,7 +2,7 @@
 
 Command line tools for preparing assets for idTech 3 engines (Quake III Arena, ioquake3, Wolfenstein: Enemy Territory, Jedi Academy, ...): maps, mods, texture packs and pk3s.
 
-Written in C++11, built with CMake. Subcommands:
+Written in Rust, built with cargo. Subcommands:
 
 | command    | purpose                                                                 |
 |------------|-------------------------------------------------------------------------|
@@ -12,64 +12,64 @@ Written in C++11, built with CMake. Subcommands:
 
 ### Release binaries for every platform
 
-[pixi](https://pixi.sh) provides zig, CMake, Ninja and Python. zig cross compiles every platform from any host pixi supports (Linux, macOS and Windows, x86_64 and arm64):
+Rust comes from [rustup](https://rustup.rs); `rust-toolchain.toml` pins the exact version together with the cross targets; `rustup toolchain install` in the checkout installs all of them. [pixi](https://pixi.sh) provides the rest: zig and [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) for Linux and macOS, clang-cl, lld-link and llvm-lib for Windows, and Python. Every platform is cross compiled from any host pixi supports (Linux, macOS and Windows, x86_64 and arm64):
 
 ```sh
-pixi run dist          # all platforms, collected into ./dist
-pixi run test          # build for the host and run the tests
-pixi run test --debug  # ... as a debug build, which traps on undefined behaviour
-pixi run repro         # build everything twice and compare byte by byte
-pixi run dev --help    # all dev.py subcommands
+pixi run dist             # all platforms, collected into ./dist
+pixi run test             # run the tests on the host (debug assertions, overflow checks)
+pixi run test --release   # ... with the release profile
+pixi run repro            # build everything twice and compare byte by byte
+pixi run dev --help       # all dev.py subcommands
 ```
 
-`./dev.py` works the same way and enters the pixi environment by itself when the tools are not on `PATH`. `./dev.py build -t windows-x86_64` builds a single platform into `build/<platform>-release`, and `./dev.py targets` lists them:
+`./dev.py` works the same way and enters the pixi environment by itself when the tools are not on `PATH`. `./dev.py build -t windows-x86_64` builds a single platform into `target/<rust target>/release`, `./dev.py build -a` builds all of them, and `./dev.py targets` lists them:
 
-| platform         | zig target                 | artifact                    |
-|------------------|----------------------------|-----------------------------|
-| `linux-x86_64`   | `x86_64-linux-musl`        | `idt3tc-linux-x86_64`       |
-| `linux-arm64`    | `aarch64-linux-musl`       | `idt3tc-linux-arm64`        |
-| `macos-x86_64`   | `x86_64-macos.10.13-none`  | `idt3tc-macos-x86_64`       |
-| `macos-arm64`    | `aarch64-macos.11.0-none`  | `idt3tc-macos-arm64`        |
-| `windows-x86_64` | `x86_64-windows-gnu`       | `idt3tc-windows-x86_64.exe` |
-| `windows-arm64`  | `aarch64-windows-gnu`      | `idt3tc-windows-arm64.exe`  |
+| platform         | Rust target                  | built with      | artifact                    |
+|------------------|------------------------------|-----------------|-----------------------------|
+| `linux-x86_64`   | `x86_64-unknown-linux-musl`  | cargo-zigbuild  | `idt3tc-linux-x86_64`       |
+| `linux-arm64`    | `aarch64-unknown-linux-musl` | cargo-zigbuild  | `idt3tc-linux-arm64`        |
+| `macos-x86_64`   | `x86_64-apple-darwin`        | cargo-zigbuild  | `idt3tc-macos-x86_64`       |
+| `macos-arm64`    | `aarch64-apple-darwin`       | cargo-zigbuild  | `idt3tc-macos-arm64`        |
+| `windows-x86_64` | `x86_64-pc-windows-msvc`     | cargo-xwin      | `idt3tc-windows-x86_64.exe` |
+| `windows-arm64`  | `aarch64-pc-windows-msvc`    | cargo-xwin      | `idt3tc-windows-arm64.exe`  |
 
-The Linux binaries are fully static, the macOS ones only link `libSystem`, and the Windows ones only the system DLLs (Universal CRT and `KERNEL32`). All target the baseline instruction set of their CPU. The platform table lives in `cmake/targets.json` and is shared by `dev.py` and the CMake toolchain file.
+The platform table lives in `PLATFORMS` in `dev.py`. The macOS builds target macOS 10.13 (x86_64) and 11.0 (arm64). Expect a warning that `xcrun --sdk macosx --show-sdk-path` failed when building them off a Mac; zig supplies the `libSystem` stubs instead of an SDK.
+
+[cargo-xwin](https://github.com/rust-cross/cargo-xwin) is not packaged on conda-forge, so `dev.py` installs the pinned version into `.cache/tools` with `cargo install --locked`. The first Windows build then downloads the pinned MSVC CRT and Windows SDK (the versions are set in `dev.py`) into `.cache/xwin`.
+
+The Linux binaries are fully static, the macOS ones only link `libSystem`, and the Windows ones link the C runtime statically and only depend on DLLs that ship with Windows 10 and later (`KERNEL32`, `ntdll`, `bcryptprimitives` and an API set), not on the Visual C++ redistributable. All target the baseline instruction set of their CPU.
 
 `dist` also writes `SHA256SUMS`. With `--url-base URL` it additionally writes `idt3tc.multitool.json`, a [rules_multitool](https://github.com/theoremlp/rules_multitool) lock file for binaries published under `URL`. The platform names are rules_multitool's `os`/`cpu` values.
 
+### Dependencies
+
+- Crates, pinned with checksums in `Cargo.lock`: [image](https://crates.io/crates/image) for decoding PNG, JPEG, BMP, GIF, HDR, PNM and TGA (only these decoders are enabled), [png](https://crates.io/crates/png), [rayon](https://crates.io/crates/rayon) for the parallel runs and [libm](https://crates.io/crates/libm) for math functions that give the same results on every platform. The DDS and PSD readers are part of idt3tc.
+- [Compressonator](https://github.com/GPUOpen-Tools/compressonator) V4.6.0: the `CMP_Core` BC1-BC7 block encoders and decoders, vendored unmodified in `third_party/compressonator` (see its README there). `build.rs` compiles them with the C API shim in `cmp/` and applies the local fixes for undefined behaviour at build time.
+
 ### Reproducibility
 
-Release builds are bit-for-bit reproducible: the same commit and the pinned pixi environment produce identical binaries regardless of the host, the checkout path or the state of the zig cache. No timestamps, build paths or debug info are embedded, and `pixi run repro` checks this by building a second time in a copy of the tree at another path with empty zig caches.
+Release builds are bit-for-bit reproducible: the same commit with the same pinned toolchains (Rust from `rust-toolchain.toml`, the pixi environment from `pixi.lock`, cargo-xwin and the MSVC CRT/SDK from `dev.py`) produces identical binaries regardless of the checkout path or the state of the build caches. Neither timestamps, build paths nor debug info end up in the binaries:
 
-The image output is reproducible too: floating point contraction is disabled and Compressonator's runtime SIMD dispatch is replaced by its portable code, so the same input and options give the same bytes on every platform and CPU.
+- Rust paths are remapped with `--remap-path-prefix`, the C++ ones with `-ffile-prefix-map`.
+- The Windows binaries are linked without a PDB and with `/Brepro`, which replaces the link time in the PE header with a content hash (`.cargo/config.toml`).
+- The macOS binaries are linked with `-Wl,-S`, so the Mach-O UUID does not depend on object paths.
+
+`pixi run repro` checks this by building a second time in a copy of the tree at another path, with its own target directory and empty zig caches.
+
+The image output is reproducible too: floating point contraction is disabled for the C++ code, Compressonator's runtime SIMD dispatch is replaced by its portable code, and math functions come from libm instead of the platform, so the same input and options give the same bytes on every platform and CPU.
 
 ### CI and releases
 
-The `CI` workflow builds and tests every platform on `ubuntu-latest` and runs the reproducibility check. Started manually with `release` checked, it also publishes the binaries, `SHA256SUMS` and `idt3tc.multitool.json` as GitHub release `v<version>`, using the version in `CMakeLists.txt`. Assets are uploaded into a draft that is only published once all of them arrived intact, and deleted otherwise. An existing release is never overwritten.
+The `CI` workflow builds and tests every platform on `ubuntu-latest` and runs the reproducibility check. Started manually with `release` checked, it also publishes the binaries, `SHA256SUMS` and `idt3tc.multitool.json` as GitHub release `v<version>`, using the version in `Cargo.toml`. Assets are uploaded into a draft that is only published once all of them arrived intact, and deleted otherwise. An existing release is never overwritten.
 
-### With the host compiler
+### With plain cargo
 
-Plain CMake works too, with any C++11 compiler, but without the guarantees above:
-
-```sh
-cmake -S . -B build/native -G Ninja
-cmake --build build/native
-ctest --test-dir build/native
-```
-
-CMake downloads two pinned dependencies (hash-verified) at configure time and extracts them into `.cache/deps`, which all build directories share:
-
-- [Compressonator](https://github.com/GPUOpen-Tools/compressonator) V4.6.0: only the `CMP_Core` block encoders/decoders are compiled, into a static library.
-- [stb](https://github.com/nothings/stb): `stb_image` (decoding) and `stb_image_write` (PNG/JPG/BMP).
-
-For offline builds, point CMake at local checkouts:
+On Linux and macOS, plain cargo with the host's GCC or clang works too, but without the guarantees above:
 
 ```sh
-cmake -S . -B build/native -DFETCHCONTENT_SOURCE_DIR_COMPRESSONATOR=/path/to/compressonator \
-                           -DFETCHCONTENT_SOURCE_DIR_STB=/path/to/stb
+cargo build --release   # target/release/idt3tc
+cargo test
 ```
-
-Options: `IDT3_BUILD_TESTS` (default `ON`), `IDT3_WARNINGS_AS_ERRORS` (default `OFF`), `IDT3_DEPS_CACHE` (default `.cache/deps`).
 
 ## `idt3tc img`
 
