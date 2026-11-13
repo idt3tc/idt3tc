@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the binaries as GitHub release v<project version>"
+        type: boolean
+        default: false
+
+# Two runs for the same ref would race for the same release tag.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # zig cross compiles every platform from this one Linux runner, so there is
+  # no build matrix: all binaries come out of the same toolchain in one job.
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Project version
+        id: version
+        run: echo "version=$(python3 dev.py version)" >> "$GITHUB_OUTPUT"
+
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.84.2
+          locked: true
+          cache: true
+
+      # The dependency archives are pinned by hash in cmake/Dependencies.cmake,
+      # so that file is the cache key.
+      - name: Cache dependency downloads
+        uses: actions/cache@v4
+        with:
+          path: .cache/deps/download
+          key: deps-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      - name: Test (release)
+        run: pixi run test
+
+      # zig enables UBSan in debug builds, with traps instead of reports.
+      - name: Test (debug, UBSan)
+        run: pixi run test --debug
+
+      # Builds every platform here, then again in a copy of the tree at another
+      # path with empty zig caches, and fails unless both agree byte by byte.
+      - name: Reproducibility check
+        run: pixi run repro
+
+      # Only re-collects the release builds from the previous step, now with
+      # the rules_multitool lock file pointing at the release download URLs.
+      - name: Dist
+        run: >-
+          pixi run dist --url-base
+          "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}"
+
+      - name: Verify dist
+        working-directory: dist
+        run: |
+          expected=(
+            idt3-linux-arm64
+            idt3-linux-x86_64
+            idt3-macos-arm64
+            idt3-macos-x86_64
+            idt3-windows-arm64.exe
+            idt3-windows-x86_64.exe
+            SHA256SUMS
+            idt3.multitool.json
+          )
+          for file in "${expected[@]}"; do
+            test -s "$file" || { echo "::error::missing $file"; exit 1; }
+          done
+          # Nothing beyond the expected files may end up in the release.
+          test "$(find . -mindepth 1 | wc -l)" -eq "${#expected[@]}" || { ls -lA; echo "::error::unexpected files in dist"; exit 1; }
+          sha256sum -c SHA256SUMS
+          ./idt3-linux-x86_64 --version | grep -qx "idt3 ${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: idt3-dist
+          path: |
+            dist/idt3-linux-arm64
+            dist/idt3-linux-x86_64
+            dist/idt3-macos-arm64
+            dist/idt3-macos-x86_64
+            dist/idt3-windows-arm64.exe
+            dist/idt3-windows-x86_64.exe
+            dist/SHA256SUMS
+            dist/idt3.multitool.json
+          if-no-files-found: error
+
+      # CMake only prints the outcome of its compiler checks; the compiler and
+      # linker output of every try_compile lands in these logs.
+      - name: Upload CMake logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-logs
+          path: |
+            build/*/CMakeFiles/CMakeConfigureLog.yaml
+            build/*/CMakeCache.txt
+          if-no-files-found: ignore
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: v${{ needs.build.outputs.version }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: idt3-dist
+          path: dist
+
+      - name: Verify artifact
+        working-directory: dist
+        run: |
+          for file in idt3-linux-arm64 idt3-linux-x86_64 idt3-macos-arm64 idt3-macos-x86_64 \
+                      idt3-windows-arm64.exe idt3-windows-x86_64.exe SHA256SUMS idt3.multitool.json; do
+            test -s "$file" || { echo "::error::missing $file"; exit 1; }
+          done
+          sha256sum -c SHA256SUMS
+
+      # Releases are immutable once published: a version that is out already
+      # needs a version bump in CMakeLists.txt, not an overwrite.
+      - name: Check that the release does not exist
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::release $TAG exists already"; exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "::error::tag $TAG exists already"; exit 1
+          fi
+
+      # Everything is uploaded into a draft first, which is invisible to
+      # consumers and creates no tag. Only when every asset arrived intact is
+      # it published (which creates the tag); on any failure the draft is
+      # deleted again, so a release is either complete or does not exist.
+      - name: Create draft release
+        id: create
+        working-directory: dist
+        run: |
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "idt3 $TAG, built from $GITHUB_SHA. Verify downloads with \`sha256sum -c SHA256SUMS\`; \`idt3.multitool.json\` is a rules_multitool lock file for these binaries." \
+            idt3-linux-arm64 idt3-linux-x86_64 idt3-macos-arm64 idt3-macos-x86_64 \
+            idt3-windows-arm64.exe idt3-windows-x86_64.exe SHA256SUMS idt3.multitool.json
+
+      - name: Verify uploaded assets
+        working-directory: dist
+        run: |
+          expected="$(printf '%s\n' idt3-linux-arm64 idt3-linux-x86_64 idt3-macos-arm64 idt3-macos-x86_64 \
+            idt3-windows-arm64.exe idt3-windows-x86_64.exe SHA256SUMS idt3.multitool.json | sort)"
+          uploaded="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          if [ "$expected" != "$uploaded" ]; then
+            echo "::error::uploaded assets differ:"; diff <(echo "$expected") <(echo "$uploaded"); exit 1
+          fi
+          # Download everything back and check it against the local checksums.
+          mkdir ../roundtrip
+          gh release download "$TAG" --dir ../roundtrip
+          cd ../roundtrip && sha256sum -c ../dist/SHA256SUMS && cmp SHA256SUMS ../dist/SHA256SUMS \
+            && cmp idt3.multitool.json ../dist/idt3.multitool.json
+
+      - name: Publish release
+        run: gh release edit "$TAG" --draft=false
+
+      # Only a draft this run created is removed: when the existence check
+      # failed, the create step was skipped and the release found must stay.
+      - name: Delete incomplete draft
+        if: failure() && steps.create.outcome != 'skipped'
+        run: |
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release delete "$TAG" --yes
+          fi
