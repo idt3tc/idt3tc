@@ -21,6 +21,15 @@ if(NOT _idt3_multi_config AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# Keep a*b+c as two rounded operations. GCC and clang otherwise fuse them
+# into FMA instructions where the target has them (always on arm64, never on
+# baseline x86_64), which changes the rounding and makes the same input
+# produce different pixels and blocks depending on the platform. Applied
+# before the dependencies so Compressonator is covered too.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-ffp-contract=off)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
 
