@@ -130,7 +130,7 @@ unsigned char extractMasked(unsigned v, unsigned mask)
     while (!((mask >> shift) & 1))
         ++shift;
     unsigned bits = 0;
-    while ((mask >> (shift + bits)) & 1 && shift + bits < 32)
+    while (shift + bits < 32 && ((mask >> (shift + bits)) & 1))
         ++bits;
     unsigned x = (v & mask) >> shift;
     unsigned maxv = bits >= 32 ? 0xffffffffu : (1u << bits) - 1;
