@@ -11,8 +11,8 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(IDT3_BUILD_TESTS "Build the idt3 unit and CLI tests" ON)
-option(IDT3_WARNINGS_AS_ERRORS "Treat compiler warnings as errors for idt3 sources" OFF)
+option(IDT3_BUILD_TESTS "Build the idt3tc unit and CLI tests" ON)
+option(IDT3_WARNINGS_AS_ERRORS "Treat compiler warnings as errors for idt3tc sources" OFF)
 
 # Default to an optimized build for single-config generators; image
 # processing and block compression are painfully slow without optimization.
@@ -83,11 +83,11 @@ else()
     endif()
 endif()
 
-add_executable(idt3 src/main.cpp)
-target_link_libraries(idt3 PRIVATE idt3_core)
+add_executable(idt3tc src/main.cpp)
+target_link_libraries(idt3tc PRIVATE idt3_core)
 
 include(GNUInstallDirs)
-install(TARGETS idt3 RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(TARGETS idt3tc RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 if(IDT3_BUILD_TESTS)
     enable_testing()

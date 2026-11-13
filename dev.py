@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build driver for idt3.
+"""Build driver for idt3tc.
 
-Cross compiles idt3 with zig for every supported platform from any host pixi
+Cross compiles idt3tc with zig for every supported platform from any host pixi
 runs on, collects the binaries under names rules_multitool can consume, and
 checks that the build is reproducible:
 
@@ -41,7 +41,7 @@ TARGETS_FILE = ROOT / "cmake" / "targets.json"
 DEPS_DOWNLOADS = ROOT / ".cache" / "deps" / "download"
 
 # The tool name; every artifact is called `<NAME>-<platform>[.exe]`.
-NAME = "idt3"
+NAME = "idt3tc"
 
 # The platform table is shared with cmake/ZigToolchain.cmake. Its keys are
 # `<os>-<cpu>` spelled the way rules_multitool spells them, so the artifact
@@ -126,7 +126,7 @@ def executable_name(target):
 
 
 def artifact_name(target):
-    """`idt3-linux-x86_64`, `idt3-windows-arm64.exe`, ..."""
+    """`idt3tc-linux-x86_64`, `idt3tc-windows-arm64.exe`, ..."""
     suffix = ".exe" if PLATFORMS[target]["os"] == "windows" else ""
     return f"{NAME}-{target}{suffix}"
 

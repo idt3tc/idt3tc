@@ -1,4 +1,4 @@
-// idt3: tools for provisioning idTech 3 maps, mods and texture packs.
+// idt3tc: tools for provisioning idTech 3 maps, mods and texture packs.
 
 #include "common/util.h"
 #include "common/version.h"
@@ -25,10 +25,10 @@ const Command kCommands[] = {
 
 void printUsage()
 {
-    std::printf("usage: idt3 [--version] [--help] COMMAND [ARGS...]\n\ncommands:\n");
+    std::printf("usage: idt3tc [--version] [--help] COMMAND [ARGS...]\n\ncommands:\n");
     for (size_t i = 0; i < sizeof(kCommands) / sizeof(kCommands[0]); ++i)
         std::printf("  %-8s %s\n", kCommands[i].name, kCommands[i].summary);
-    std::printf("\nRun 'idt3 COMMAND --help' or 'idt3 help COMMAND' for details.\n");
+    std::printf("\nRun 'idt3tc COMMAND --help' or 'idt3tc help COMMAND' for details.\n");
 }
 
 const Command* findCommand(const std::string& name)
@@ -46,7 +46,7 @@ int unknownCommand(const std::string& name)
     for (size_t i = 0; i < sizeof(kCommands) / sizeof(kCommands[0]); ++i)
         names.push_back(kCommands[i].name);
     std::string hint = idt3::closestMatch(name, names);
-    std::fprintf(stderr, "idt3: unknown command '%s'%s\n", name.c_str(),
+    std::fprintf(stderr, "idt3tc: unknown command '%s'%s\n", name.c_str(),
                  hint.empty() ? "" : (" (did you mean '" + hint + "'?)").c_str());
     return 2;
 }
@@ -67,7 +67,7 @@ int main(int argc, char** argv)
             return 0;
         }
         if (first == "--version" || first == "-V") {
-            std::printf("idt3 %s\n", IDT3_VERSION);
+            std::printf("idt3tc %s\n", IDT3_VERSION);
             return 0;
         }
         if (first == "help") {
@@ -86,10 +86,10 @@ int main(int argc, char** argv)
             return unknownCommand(first);
         return c->run(std::vector<std::string>(args.begin() + 1, args.end()));
     } catch (const idt3::UsageError& e) {
-        std::fprintf(stderr, "idt3: %s\n", e.what());
+        std::fprintf(stderr, "idt3tc: %s\n", e.what());
         return 2;
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "idt3: %s\n", e.what());
+        std::fprintf(stderr, "idt3tc: %s\n", e.what());
         return 1;
     }
 }

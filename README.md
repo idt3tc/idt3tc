@@ -1,4 +1,4 @@
-# idt3 - idTech 3 provisioning toolchain
+# idt3tc - idTech 3 provisioning toolchain
 
 Command line tools for preparing assets for idTech 3 engines (Quake III Arena, ioquake3, Wolfenstein: Enemy Territory, Jedi Academy, ...): maps, mods, texture packs and pk3s.
 
@@ -6,7 +6,7 @@ Written in C++11, built with CMake. Subcommands:
 
 | command    | purpose                                                                 |
 |------------|-------------------------------------------------------------------------|
-| `idt3 img` | convert and process images: TGA, DDS (BC1-BC7 via AMD Compressonator), PNG, JPG, BMP |
+| `idt3tc img` | convert and process images: TGA, DDS (BC1-BC7 via AMD Compressonator), PNG, JPG, BMP |
 
 ## Building
 
@@ -24,18 +24,18 @@ pixi run dev --help    # all dev.py subcommands
 
 `./dev.py` works the same way and enters the pixi environment by itself when the tools are not on `PATH`. `./dev.py build -t windows-x86_64` builds a single platform into `build/<platform>-release`, and `./dev.py targets` lists them:
 
-| platform         | zig target                 | artifact                  |
-|------------------|----------------------------|---------------------------|
-| `linux-x86_64`   | `x86_64-linux-musl`        | `idt3-linux-x86_64`       |
-| `linux-arm64`    | `aarch64-linux-musl`       | `idt3-linux-arm64`        |
-| `macos-x86_64`   | `x86_64-macos.10.13-none`  | `idt3-macos-x86_64`       |
-| `macos-arm64`    | `aarch64-macos.11.0-none`  | `idt3-macos-arm64`        |
-| `windows-x86_64` | `x86_64-windows-gnu`       | `idt3-windows-x86_64.exe` |
-| `windows-arm64`  | `aarch64-windows-gnu`      | `idt3-windows-arm64.exe`  |
+| platform         | zig target                 | artifact                    |
+|------------------|----------------------------|-----------------------------|
+| `linux-x86_64`   | `x86_64-linux-musl`        | `idt3tc-linux-x86_64`       |
+| `linux-arm64`    | `aarch64-linux-musl`       | `idt3tc-linux-arm64`        |
+| `macos-x86_64`   | `x86_64-macos.10.13-none`  | `idt3tc-macos-x86_64`       |
+| `macos-arm64`    | `aarch64-macos.11.0-none`  | `idt3tc-macos-arm64`        |
+| `windows-x86_64` | `x86_64-windows-gnu`       | `idt3tc-windows-x86_64.exe` |
+| `windows-arm64`  | `aarch64-windows-gnu`      | `idt3tc-windows-arm64.exe`  |
 
 The Linux binaries are fully static, the macOS ones only link `libSystem`, and the Windows ones only the system DLLs (Universal CRT and `KERNEL32`). All target the baseline instruction set of their CPU. The platform table lives in `cmake/targets.json` and is shared by `dev.py` and the CMake toolchain file.
 
-`dist` also writes `SHA256SUMS`. With `--url-base URL` it additionally writes `idt3.multitool.json`, a [rules_multitool](https://github.com/theoremlp/rules_multitool) lock file for binaries published under `URL`. The platform names are rules_multitool's `os`/`cpu` values.
+`dist` also writes `SHA256SUMS`. With `--url-base URL` it additionally writes `idt3tc.multitool.json`, a [rules_multitool](https://github.com/theoremlp/rules_multitool) lock file for binaries published under `URL`. The platform names are rules_multitool's `os`/`cpu` values.
 
 ### Reproducibility
 
@@ -45,7 +45,7 @@ The image output is reproducible too: floating point contraction is disabled and
 
 ### CI and releases
 
-The `CI` workflow builds and tests every platform on `ubuntu-latest` and runs the reproducibility check. Started manually with `release` checked, it also publishes the binaries, `SHA256SUMS` and `idt3.multitool.json` as GitHub release `v<version>`, using the version in `CMakeLists.txt`. Assets are uploaded into a draft that is only published once all of them arrived intact, and deleted otherwise. An existing release is never overwritten.
+The `CI` workflow builds and tests every platform on `ubuntu-latest` and runs the reproducibility check. Started manually with `release` checked, it also publishes the binaries, `SHA256SUMS` and `idt3tc.multitool.json` as GitHub release `v<version>`, using the version in `CMakeLists.txt`. Assets are uploaded into a draft that is only published once all of them arrived intact, and deleted otherwise. An existing release is never overwritten.
 
 ### With the host compiler
 
@@ -71,18 +71,18 @@ cmake -S . -B build/native -DFETCHCONTENT_SOURCE_DIR_COMPRESSONATOR=/path/to/com
 
 Options: `IDT3_BUILD_TESTS` (default `ON`), `IDT3_WARNINGS_AS_ERRORS` (default `OFF`), `IDT3_DEPS_CACHE` (default `.cache/deps`).
 
-## `idt3 img`
+## `idt3tc img`
 
 ```
-idt3 img [OPTIONS] [INPUT...] --OP [ARG] [key=value...] [--OP ...]
+idt3tc img [OPTIONS] [INPUT...] --OP [ARG] [key=value...] [--OP ...]
 ```
 
 Operations run **in the order given**, once per input. Every operation has an optional argument and `key=value` options; flag options can be given as a bare key (`rle` is the same as `rle=1`). Unknown or non-applicable keys are errors, not silently ignored.
 
 ```sh
-idt3 img --help            # overview of all operations
-idt3 img --help resize     # details and options of one operation
-idt3 img --help all        # everything
+idt3tc img --help            # overview of all operations
+idt3tc img --help resize     # details and options of one operation
+idt3tc img --help all        # everything
 ```
 
 Global options: `-j N` (threads, default all cores), `-r` (recurse into directory inputs), `-k` (keep going after errors), `-q`, `-v`.
@@ -115,7 +115,7 @@ Colors are `#rrggbb[aa]`, `rrggbb[aa]`, `#rgb[a]`, `r,g,b[,a]` (0-255) or a name
 
 ### Output formats
 
-**TGA** (`.tga`): defaults match the idTech 3 loader: uncompressed, bottom-up rows (ioquake3 ignores the top-down flag), 32 bit with alpha else 24 bit. Options: `bpp=auto|8|24|32`, `rle`, `origin=bottom|top`. RLE packets never cross scanlines. 8-bit RLE (type 11) is not supported by the engine, so `idt3` warns about it.
+**TGA** (`.tga`): defaults match the idTech 3 loader: uncompressed, bottom-up rows (ioquake3 ignores the top-down flag), 32 bit with alpha else 24 bit. Options: `bpp=auto|8|24|32`, `rle`, `origin=bottom|top`. RLE packets never cross scanlines. 8-bit RLE (type 11) is not supported by the engine, so `idt3tc` warns about it.
 
 **DDS** (`.dds`), for engines with DDS support:
 
@@ -145,26 +145,26 @@ Further DDS options:
 
 ```sh
 # Photo to a power-of-two idTech 3 texture
-idt3 img photo.jpg --pot --save textures/mymap/wall.tga
+idt3tc img photo.jpg --pot --save textures/mymap/wall.tga
 
 # A whole folder at half size, RLE TGAs mirroring the folder structure
-idt3 img src/ -r --resize 50% filter=lanczos3 --save out/{rel}.tga rle
+idt3tc img src/ -r --resize 50% filter=lanczos3 --save out/{rel}.tga rle
 
 # Alpha-tested grate as DXT1 with 1-bit alpha and coverage-preserving mips
-idt3 img grate.png --pot max=512 --save grate.dds codec=bc1a mip-coverage=0.5
+idt3tc img grate.png --pot max=512 --save grate.dds codec=bc1a mip-coverage=0.5
 
 # Height map to a BC5 normal map
-idt3 img height.png --normalmap strength=4 --save wall_n.dds codec=bc5
+idt3tc img height.png --normalmap strength=4 --save wall_n.dds codec=bc5
 
 # Check seams of a tiling texture: offset by half its size
-idt3 img tile.tga --pan 50%,50% --save tile_seams.png
+idt3tc img tile.tga --pan 50%,50% --save tile_seams.png
 
 # Several variants of one source in one run
-idt3 img logo.png --trim --resize 240x240 fit=contain --canvas 256x256 --save logo.tga \
+idt3tc img logo.png --trim --resize 240x240 fit=contain --canvas 256x256 --save logo.tga \
                   --resize 128x128 --save logo_small.tga --save logo.dds codec=bc7
 
 # Sprite with a magenta background to a TGA with alpha
-idt3 img sprite.bmp --colorkey ff00ff fuzz=0.05 soft=0.05 --save sprite.tga
+idt3tc img sprite.bmp --colorkey ff00ff fuzz=0.05 soft=0.05 --save sprite.tga
 ```
 
 Exit codes: `0` success, `1` processing error, `2` usage error.

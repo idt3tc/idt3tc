@@ -72,14 +72,14 @@ jobs:
         working-directory: dist
         run: |
           expected=(
-            idt3-linux-arm64
-            idt3-linux-x86_64
-            idt3-macos-arm64
-            idt3-macos-x86_64
-            idt3-windows-arm64.exe
-            idt3-windows-x86_64.exe
+            idt3tc-linux-arm64
+            idt3tc-linux-x86_64
+            idt3tc-macos-arm64
+            idt3tc-macos-x86_64
+            idt3tc-windows-arm64.exe
+            idt3tc-windows-x86_64.exe
             SHA256SUMS
-            idt3.multitool.json
+            idt3tc.multitool.json
           )
           for file in "${expected[@]}"; do
             test -s "$file" || { echo "::error::missing $file"; exit 1; }
@@ -87,20 +87,20 @@ jobs:
           # Nothing beyond the expected files may end up in the release.
           test "$(find . -mindepth 1 | wc -l)" -eq "${#expected[@]}" || { ls -lA; echo "::error::unexpected files in dist"; exit 1; }
           sha256sum -c SHA256SUMS
-          ./idt3-linux-x86_64 --version | grep -qx "idt3 ${{ steps.version.outputs.version }}"
+          ./idt3tc-linux-x86_64 --version | grep -qx "idt3tc ${{ steps.version.outputs.version }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: idt3-dist
+          name: idt3tc-dist
           path: |
-            dist/idt3-linux-arm64
-            dist/idt3-linux-x86_64
-            dist/idt3-macos-arm64
-            dist/idt3-macos-x86_64
-            dist/idt3-windows-arm64.exe
-            dist/idt3-windows-x86_64.exe
+            dist/idt3tc-linux-arm64
+            dist/idt3tc-linux-x86_64
+            dist/idt3tc-macos-arm64
+            dist/idt3tc-macos-x86_64
+            dist/idt3tc-windows-arm64.exe
+            dist/idt3tc-windows-x86_64.exe
             dist/SHA256SUMS
-            dist/idt3.multitool.json
+            dist/idt3tc.multitool.json
           if-no-files-found: error
 
       # CMake only prints the outcome of its compiler checks; the compiler and
@@ -129,14 +129,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: idt3-dist
+          name: idt3tc-dist
           path: dist
 
       - name: Verify artifact
         working-directory: dist
         run: |
-          for file in idt3-linux-arm64 idt3-linux-x86_64 idt3-macos-arm64 idt3-macos-x86_64 \
-                      idt3-windows-arm64.exe idt3-windows-x86_64.exe SHA256SUMS idt3.multitool.json; do
+          for file in idt3tc-linux-arm64 idt3tc-linux-x86_64 idt3tc-macos-arm64 idt3tc-macos-x86_64 \
+                      idt3tc-windows-arm64.exe idt3tc-windows-x86_64.exe SHA256SUMS idt3tc.multitool.json; do
             test -s "$file" || { echo "::error::missing $file"; exit 1; }
           done
           sha256sum -c SHA256SUMS
@@ -161,15 +161,15 @@ jobs:
         working-directory: dist
         run: |
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
-            --notes "idt3 $TAG, built from $GITHUB_SHA. Verify downloads with \`sha256sum -c SHA256SUMS\`; \`idt3.multitool.json\` is a rules_multitool lock file for these binaries." \
-            idt3-linux-arm64 idt3-linux-x86_64 idt3-macos-arm64 idt3-macos-x86_64 \
-            idt3-windows-arm64.exe idt3-windows-x86_64.exe SHA256SUMS idt3.multitool.json
+            --notes "idt3tc $TAG, built from $GITHUB_SHA. Verify downloads with \`sha256sum -c SHA256SUMS\`; \`idt3tc.multitool.json\` is a rules_multitool lock file for these binaries." \
+            idt3tc-linux-arm64 idt3tc-linux-x86_64 idt3tc-macos-arm64 idt3tc-macos-x86_64 \
+            idt3tc-windows-arm64.exe idt3tc-windows-x86_64.exe SHA256SUMS idt3tc.multitool.json
 
       - name: Verify uploaded assets
         working-directory: dist
         run: |
-          expected="$(printf '%s\n' idt3-linux-arm64 idt3-linux-x86_64 idt3-macos-arm64 idt3-macos-x86_64 \
-            idt3-windows-arm64.exe idt3-windows-x86_64.exe SHA256SUMS idt3.multitool.json | sort)"
+          expected="$(printf '%s\n' idt3tc-linux-arm64 idt3tc-linux-x86_64 idt3tc-macos-arm64 idt3tc-macos-x86_64 \
+            idt3tc-windows-arm64.exe idt3tc-windows-x86_64.exe SHA256SUMS idt3tc.multitool.json | sort)"
           uploaded="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
           if [ "$expected" != "$uploaded" ]; then
             echo "::error::uploaded assets differ:"; diff <(echo "$expected") <(echo "$uploaded"); exit 1
@@ -178,7 +178,7 @@ jobs:
           mkdir ../roundtrip
           gh release download "$TAG" --dir ../roundtrip
           cd ../roundtrip && sha256sum -c ../dist/SHA256SUMS && cmp SHA256SUMS ../dist/SHA256SUMS \
-            && cmp idt3.multitool.json ../dist/idt3.multitool.json
+            && cmp idt3tc.multitool.json ../dist/idt3tc.multitool.json
 
       - name: Publish release
         run: gh release edit "$TAG" --draft=false

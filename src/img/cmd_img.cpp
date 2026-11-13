@@ -1,4 +1,4 @@
-// Command line front end of `idt3 img`: argument parsing, input expansion,
+// Command line front end of `idt3tc img`: argument parsing, input expansion,
 // pipeline execution and help output.
 
 #include "img/cmd_img.h"
@@ -125,7 +125,7 @@ const OpInfo* findOp(const std::string& tok, std::string& inlineArg, bool& hasIn
     std::string hint = closestMatch(name, OpRegistry::instance().names());
     throw UsageError("unknown operation or option '" + tok + "'" +
                      (hint.empty() ? std::string() : " (did you mean '--" + hint + "'?)") +
-                     "; see 'idt3 img --help'");
+                     "; see 'idt3tc img --help'");
 }
 
 bool isKnownOptionKey(const OpInfo& info, const std::string& key)
@@ -229,7 +229,7 @@ void printImgHelp(const std::string& topic)
     }
 
     std::printf(
-        "usage: idt3 img [OPTIONS] [INPUT...] --OP [ARG] [key=value...] [--OP ...]\n"
+        "usage: idt3tc img [OPTIONS] [INPUT...] --OP [ARG] [key=value...] [--OP ...]\n"
         "\n"
         "Runs a pipeline of image operations, in the given order, once for every input. Inputs may be\n"
         "image files or directories (all images inside are processed). Without inputs, the pipeline has to\n"
@@ -267,14 +267,14 @@ void printImgHelp(const std::string& topic)
 
     std::printf(
         "\n"
-        "Every operation takes key=value options; see 'idt3 img --help OP'.\n"
+        "Every operation takes key=value options; see 'idt3tc img --help OP'.\n"
         "\n"
         "examples:\n"
-        "  idt3 img photo.jpg --pot --save textures/mymap/wall.tga\n"
-        "  idt3 img src/ -r --resize 50%% filter=lanczos3 --save out/{rel}.tga rle\n"
-        "  idt3 img grate.png --pot max=512 --save grate.dds codec=bc1a mip-coverage=0.5\n"
-        "  idt3 img height.png --normalmap strength=4 --save wall_n.dds codec=bc5\n"
-        "  idt3 img logo.png --rotate 15 --canvas 256x256 --pan 16,0 --save logo.tga\n");
+        "  idt3tc img photo.jpg --pot --save textures/mymap/wall.tga\n"
+        "  idt3tc img src/ -r --resize 50%% filter=lanczos3 --save out/{rel}.tga rle\n"
+        "  idt3tc img grate.png --pot max=512 --save grate.dds codec=bc1a mip-coverage=0.5\n"
+        "  idt3tc img height.png --normalmap strength=4 --save wall_n.dds codec=bc5\n"
+        "  idt3tc img logo.png --rotate 15 --canvas 256x256 --pan 16,0 --save logo.tga\n");
 
     if (topic == "all") {
         for (size_t i = 0; i < reg.all().size(); ++i) {
@@ -373,9 +373,9 @@ int runImgCommand(const std::vector<std::string>& args)
             return 2;
         }
         if (steps.empty())
-            throw UsageError("no operations given; e.g. add '--save {name}.tga' (see 'idt3 img --help')");
+            throw UsageError("no operations given; e.g. add '--save {name}.tga' (see 'idt3tc img --help')");
     } catch (const UsageError& e) {
-        std::fprintf(stderr, "idt3 img: %s\n", e.what());
+        std::fprintf(stderr, "idt3tc img: %s\n", e.what());
         return 2;
     }
 
@@ -395,7 +395,7 @@ int runImgCommand(const std::vector<std::string>& args)
             }
         }
     } catch (const UsageError& e) {
-        std::fprintf(stderr, "idt3 img: %s\n", e.what());
+        std::fprintf(stderr, "idt3tc img: %s\n", e.what());
         return 2;
     }
 
@@ -426,16 +426,16 @@ int runImgCommand(const std::vector<std::string>& args)
             }
         } catch (const std::exception& e) {
             ++failed;
-            std::fprintf(stderr, "idt3 img: %s: %s\n", label.c_str(), e.what());
+            std::fprintf(stderr, "idt3tc img: %s: %s\n", label.c_str(), e.what());
             if (!settings.keepGoing) {
                 if (r + 1 < runs)
-                    std::fprintf(stderr, "idt3 img: stopping (use -k to continue with the remaining inputs)\n");
+                    std::fprintf(stderr, "idt3tc img: stopping (use -k to continue with the remaining inputs)\n");
                 return 1;
             }
         }
     }
     if (failed) {
-        std::fprintf(stderr, "idt3 img: %zu of %zu input%s failed\n", failed, runs, runs == 1 ? "" : "s");
+        std::fprintf(stderr, "idt3tc img: %zu of %zu input%s failed\n", failed, runs, runs == 1 ? "" : "s");
         return 1;
     }
     return 0;
