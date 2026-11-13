@@ -36,28 +36,47 @@ undefined behaviour and silently wrong output are not acceptable.
   using it. Compute offsets and sizes with checked or widened arithmetic so
   no multiplication or addition can overflow. Never trust a declared size,
   mip count or pitch.
-- Enforce the dimension limit (`kMaxDimension`, 65536 per side) and check
-  the total pixel count and allocation size before allocating, both after
-  decoding and for every operation that produces a new size (`--resize`,
-  `--canvas`, `--pad`, `--tile`, `--rotate expand=1`, ...).
-- No unchecked indexing, no out-of-range shifts, no signed overflow, no
-  `abort()` or panics reachable from input data. Turn every failure into an
-  ordinary error carrying the input name.
+- Enforce the dimension limit (`MAX_DIMENSION`, 65536 per side) and the
+  pixel count limit (`MAX_PIXELS`) through `check_dimensions()` in
+  `src/img/image.rs` before allocating, both after decoding and for every
+  operation that produces a new size (`--resize`, `--canvas`, `--pad`,
+  `--tile`, `--rotate expand=1`, ...).
+- No panics reachable from input data: no indexing or slicing that is not
+  bounded by a validated size, no `unwrap()`/`expect()` on anything
+  derived from input, no out-of-range shifts, no `as` casts that silently
+  truncate or wrap an unchecked value. Turn every failure into an ordinary
+  `Error` carrying the input name. Each run is wrapped in `catch_unwind`
+  so that a panic only fails its own input, which is why the release
+  profile must keep `panic = "unwind"`; a panic is still a bug.
+- `./dev.py test` runs with debug assertions and integer overflow checks,
+  so arithmetic that overflows on crafted input fails the tests instead of
+  wrapping silently as in release builds. Prefer `checked_*` arithmetic or
+  `u64` intermediates in the code itself.
 - Keep loops bounded by validated sizes, so that crafted data cannot cause
   an endless loop or quadratic blowup.
-- Third-party code (decoders, CMP_Core) is part of the attack surface. Pin
-  exact versions with checksums and keep the local patches that remove
-  undefined behaviour. Only hand complete, valid 4x4 blocks and correctly
-  sized buffers to CMP_Core. When updating such dependencies, look at
-  their security fixes, and prefer memory-safe implementations where
-  available.
+- Third-party code (the `image` and `png` crates, CMP_Core) is part of the
+  attack surface. Keep exact versions in `Cargo.lock` (always build with
+  `--locked`) and enable only the decoder features that are needed. CMP_Core
+  is C++ behind the FFI in `src/img/bcn.rs` and `cmp/cmp_capi.cpp`, so none
+  of Rust's guarantees hold there: keep the local patches in `build.rs` that
+  remove its undefined behaviour, and only hand it complete 4x4 blocks and
+  buffers whose sizes were checked on the Rust side. Every `unsafe` block
+  carries a `// SAFETY:` comment stating why its pointers and sizes are
+  valid. When updating dependencies, look at their security fixes.
 - Placeholders expanded from input paths must not be able to escape the
   output root the user asked for. Paths derived from scanned files are
-  relative to the scanned directory. Keep it that way. Note that the
-  directory scan currently uses `stat()` and therefore follows symlinks,
-  including ones pointing outside the tree and symlink loops. Keep that in
-  mind when touching the scan code.
+  relative to the scanned directory. Keep it that way.
+- The directory scan (`list_files()` in `src/common/fs.rs`) follows
+  symlinks, including ones pointing outside the tree, but visits every
+  directory (by canonical path) only once, so symlink loops terminate. It
+  only collects regular files: FIFOs, devices, sockets, dangling links and
+  file symlink loops are skipped, since opening a FIFO blocks forever.
+  `read_file()` refuses non-regular files given directly as inputs for the
+  same reason. Keep both properties when touching this code.
 - Add a regression test for every bug found with a crafted file
   (truncated headers, contradictory sizes, zero or maximum dimensions,
-  bogus masks, bad FourCC/DXGI values). Fuzzing the decoders and the
+  bogus masks, bad FourCC/DXGI values). Decoder cases go into
+  `tests/hostile.rs`, cases that need the whole executable (exit codes,
+  scanned trees, special files) into `tests/cli.rs`, whose runs are bounded
+  by a timeout so that hangs fail the test. Fuzzing the decoders and the
   `img` pipeline is encouraged, and any finding gets a test as well.
