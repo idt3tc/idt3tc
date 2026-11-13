@@ -2,12 +2,30 @@
 authors = ["Vorschreibung <vorschreibung@gmail.com>"]
 channels = ['conda-forge']
 name = "idt3tc"
-platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 version = "0.1.0"
 
+# Every task cross compiles for all platforms in cmake/targets.json, whatever
+# the host is; `pixi run dev --help` lists the remaining subcommands.
 [tasks]
+dev = { cmd = ["python", "./dev.py"] }
+dist = { cmd = ["python", "./dev.py", "dist"] }
+test = { cmd = ["python", "./dev.py", "test"] }
+repro = { cmd = ["python", "./dev.py", "repro"] }
 
+# Exact pins: the compiler, its bundled libc/libc++ and the build tools all
+# end up in the bytes of the binaries, so reproducing a release requires the
+# same versions.
 [dependencies]
-zig = "*"
-cmake = "*"
-ninja = "*"
+cmake = "4.5.0.*"
+ninja = "1.13.2.*"
+python = "3.14.*"
+zig = "0.17.1.*"
+
+# zig's archiver fails on recent macOS; the standalone LLVM archive tools are
+# used there instead and can index objects for every target format.
+[target.osx-64.dependencies]
+llvm-tools = "22.1.8.*"
+
+[target.osx-arm64.dependencies]
+llvm-tools = "22.1.8.*"

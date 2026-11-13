@@ -6,3 +6,5 @@ compile_commands.json
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+/dist/
+__pycache__/
