@@ -1,0 +1,27 @@
+# The MSVC targets link the C runtime statically, so that the binaries only
+# depend on DLLs every Windows (10+) ships, not on the Visual C++
+# redistributable (VCRUNTIME140.dll). The static CRT libraries reference
+# Microsoft's PDB files, which xwin does not download; lld-link's warning
+# about that (LNK4099) is suppressed.
+#
+# Reproducible output: no PDB is written (the binaries are stripped anyway,
+# and the PDB's GUID, recorded in the executable, hashes absolute object
+# paths), and /Brepro replaces the link time in the PE header with a hash of
+# the content.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099",
+             "-C", "link-arg=/DEBUG:NONE", "-C", "link-arg=/Brepro"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099",
+             "-C", "link-arg=/DEBUG:NONE", "-C", "link-arg=/Brepro"]
+
+# zig's Mach-O linker derives LC_UUID from the linked output before rustc
+# strips it, when it still contains the debug map (N_OSO entries with the
+# absolute paths of the objects in ./target). -S leaves the debug map out,
+# so the UUID no longer depends on the checkout location.
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-S"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-S"]

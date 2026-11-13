@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Build driver for idt3tc.
 
-Cross compiles idt3tc with zig for every supported platform from any host pixi
-runs on, collects the binaries under names rules_multitool can consume, and
-checks that the build is reproducible:
+Cross compiles idt3tc for every supported platform from any host pixi runs
+on: cargo-zigbuild (zig as C++ compiler and linker) for Linux and macOS,
+cargo-xwin (clang-cl, lld-link and the MSVC CRT/Windows SDK downloaded by
+xwin) for Windows. It collects the binaries under names rules_multitool can
+consume and checks that the build is reproducible:
 
     ./dev.py targets                    # list the platforms
     ./dev.py build                      # release build for the host platform
     ./dev.py build -a                   # ... for every platform
     ./dev.py build -t windows-x86_64    # ... for one platform (repeatable)
-    ./dev.py test                       # build for the host and run the tests
-    ./dev.py test --debug               # ... with zig's UBSan traps enabled
+    ./dev.py test                       # run the tests on the host
+    ./dev.py test --release             # ... with the release profile
     ./dev.py dist                       # build every platform into ./dist
     ./dev.py dist --url-base URL        # ... plus a rules_multitool lock file
     ./dev.py repro                      # build twice, compare byte by byte
@@ -18,7 +20,8 @@ checks that the build is reproducible:
     ./dev.py clean
 
 The commands that need the toolchain re-run themselves inside the pixi
-environment when cmake, ninja or zig are not on PATH.
+environment when zig, cargo-zigbuild or the LLVM tools are not on PATH. Rust
+itself comes from rustup, pinned by rust-toolchain.toml.
 """
 
 import argparse
@@ -34,19 +37,45 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-BUILD_ROOT = ROOT / "build"
+TARGET_DIR = ROOT / "target"
 DIST_DIR = ROOT / "dist"
-TOOLCHAIN = ROOT / "cmake" / "ZigToolchain.cmake"
-TARGETS_FILE = ROOT / "cmake" / "targets.json"
-DEPS_DOWNLOADS = ROOT / ".cache" / "deps" / "download"
+CACHE_DIR = ROOT / ".cache"
+# cargo-xwin is not packaged on conda-forge; dev.py installs this exact
+# version here with `cargo install --locked`.
+TOOLS_DIR = CACHE_DIR / "tools"
+CARGO_XWIN_VERSION = "0.23.1"
+
+# The MSVC CRT and Windows SDK that xwin downloads end up in the Windows
+# binaries (static CRT), so they are pinned like every other toolchain part.
+XWIN_VERSIONS = {
+    "XWIN_VERSION": "17",
+    "XWIN_CRT_VERSION": "14.44.17.14",
+    "XWIN_SDK_VERSION": "10.0.26100",
+}
+XWIN_CACHE = CACHE_DIR / "xwin" / (XWIN_VERSIONS["XWIN_CRT_VERSION"] + "-" +
+                                   XWIN_VERSIONS["XWIN_SDK_VERSION"])
 
 # The tool name; every artifact is called `<NAME>-<platform>[.exe]`.
 NAME = "idt3tc"
 
-# The platform table is shared with cmake/ZigToolchain.cmake. Its keys are
-# `<os>-<cpu>` spelled the way rules_multitool spells them, so the artifact
-# names and the lock file entries are derived from the same place.
-PLATFORMS = json.loads(TARGETS_FILE.read_text())["platforms"]
+# Keys are `<os>-<cpu>` spelled the way rules_multitool spells them, so the
+# artifact names and the lock file entries are derived from the same place.
+# `builder` is the cargo subcommand that cross compiles the target; `macos`
+# is the minimum macOS version (MACOSX_DEPLOYMENT_TARGET).
+PLATFORMS = {
+    "linux-x86_64": {"os": "linux", "cpu": "x86_64",
+                     "triple": "x86_64-unknown-linux-musl", "builder": "zigbuild"},
+    "linux-arm64": {"os": "linux", "cpu": "arm64",
+                    "triple": "aarch64-unknown-linux-musl", "builder": "zigbuild"},
+    "macos-x86_64": {"os": "macos", "cpu": "x86_64", "macos": "10.13",
+                     "triple": "x86_64-apple-darwin", "builder": "zigbuild"},
+    "macos-arm64": {"os": "macos", "cpu": "arm64", "macos": "11.0",
+                    "triple": "aarch64-apple-darwin", "builder": "zigbuild"},
+    "windows-x86_64": {"os": "windows", "cpu": "x86_64",
+                       "triple": "x86_64-pc-windows-msvc", "builder": "xwin"},
+    "windows-arm64": {"os": "windows", "cpu": "arm64",
+                      "triple": "aarch64-pc-windows-msvc", "builder": "xwin"},
+}
 
 # Files `dist` writes next to the binaries.
 CHECKSUMS = "SHA256SUMS"
@@ -58,14 +87,8 @@ MULTITOOL_SCHEMA = ("https://raw.githubusercontent.com/theoremlp/rules_multitool
 # the second run never tries to do it again.
 PIXI_GUARD = "IDT3_INSIDE_PIXI"
 
-
-def required_tools():
-    tools = ["cmake", "ninja", "zig"]
-    # zig's archiver is broken on recent macOS; the toolchain file switches to
-    # the LLVM tools pixi installs there.
-    if platform.system() == "Darwin":
-        tools += ["llvm-ar", "llvm-ranlib"]
-    return tools
+# Provided by the pixi environment.
+PIXI_TOOLS = ["zig", "cargo-zigbuild", "clang-cl", "lld-link", "llvm-lib"]
 
 
 def reexec_in_pixi():
@@ -74,19 +97,22 @@ def reexec_in_pixi():
     That way `./dev.py ...` works the same whether or not the caller already
     activated the environment.
     """
-    tools = required_tools()
+    if shutil.which("cargo") is None or shutil.which("rustup") is None:
+        sys.exit("dev.py: cargo/rustup not found on PATH; install rustup "
+                 "(https://rustup.rs), rust-toolchain.toml selects the version")
+
     if os.environ.get(PIXI_GUARD):
-        missing = [tool for tool in tools if not shutil.which(tool)]
+        missing = [tool for tool in PIXI_TOOLS if not shutil.which(tool)]
         if missing:
             sys.exit(f"dev.py: missing in the pixi environment: {', '.join(missing)}")
         return
 
-    if all(shutil.which(tool) for tool in tools):
+    if all(shutil.which(tool) for tool in PIXI_TOOLS):
         return
 
     pixi = shutil.which("pixi")
     if pixi is None:
-        sys.exit(f"dev.py: neither the required tools ({', '.join(tools)}) "
+        sys.exit(f"dev.py: neither the required tools ({', '.join(PIXI_TOOLS)}) "
                  f"nor pixi were found on PATH")
 
     env = dict(os.environ, **{PIXI_GUARD: "1"})
@@ -102,11 +128,11 @@ def run(command, **kwargs):
 
 
 def project_version():
-    """The version from the project() call in CMakeLists.txt."""
-    text = (ROOT / "CMakeLists.txt").read_text()
-    match = re.search(r"project\([^)]*?\bVERSION\s+([0-9][0-9A-Za-z.\-]*)", text, re.S)
+    """The version from the [package] table of Cargo.toml."""
+    text = (ROOT / "Cargo.toml").read_text()
+    match = re.search(r'^\[package\][^\[]*?^version\s*=\s*"([^"]+)"', text, re.S | re.M)
     if not match:
-        sys.exit("dev.py: no VERSION found in the project() call of CMakeLists.txt")
+        sys.exit("dev.py: no version found in the [package] table of Cargo.toml")
     return match.group(1)
 
 
@@ -127,53 +153,91 @@ def executable_name(target):
 
 def artifact_name(target):
     """`idt3tc-linux-x86_64`, `idt3tc-windows-arm64.exe`, ..."""
-    suffix = ".exe" if PLATFORMS[target]["os"] == "windows" else ""
-    return f"{NAME}-{target}{suffix}"
+    return f"{NAME}-{target}" + (".exe" if PLATFORMS[target]["os"] == "windows" else "")
 
 
 def expected_dist_files():
     return sorted(artifact_name(target) for target in PLATFORMS)
 
 
-def build_dir(target, config, tests):
-    # Test builds get a directory of their own so that switching between
-    # `build` and `test` does not reconfigure (and rebuild) either one.
-    return BUILD_ROOT / f"{target}-{config.lower()}{'-tests' if tests else ''}"
+def binary_path(target, profile="release"):
+    return TARGET_DIR / PLATFORMS[target]["triple"] / profile / executable_name(target)
 
 
-def build_one(target, config="Release", tests=False, jobs=None, clean=False):
-    """Configures, builds and installs one platform; returns the build dir."""
-    output = build_dir(target, config, tests)
-    stamp = output / ".idt3-build-inputs"
-    inputs = json.dumps(PLATFORMS[target], sort_keys=True) + "\n"
+def cargo_home():
+    return Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo").resolve()
 
-    # The target triple is baked into the generated compiler shims rather than
-    # into the compile command lines, so ninja cannot see it change and would
-    # keep the old artifacts. Editing the platform entry therefore discards
-    # the build directory.
-    if stamp.is_file() and stamp.read_text() != inputs:
-        print(f"build inputs changed, discarding {output}", flush=True)
-        clean = True
-    if clean:
-        shutil.rmtree(output, ignore_errors=True)
-    output.mkdir(parents=True, exist_ok=True)
-    stamp.write_text(inputs)
 
-    # CMake is cheap to re-run and skips the work when nothing changed, so it
-    # is called unconditionally instead of checking for an existing cache.
-    run(["cmake", "-S", ROOT, "-B", output, "-G", "Ninja",
-         f"-DCMAKE_TOOLCHAIN_FILE={TOOLCHAIN}",
-         f"-DIDT3_TARGET={target}",
-         f"-DCMAKE_BUILD_TYPE={config}",
-         f"-DIDT3_BUILD_TESTS={'ON' if tests else 'OFF'}",
-         "-DIDT3_WARNINGS_AS_ERRORS=ON"])
+def ensure_cargo_xwin():
+    """Installs the pinned cargo-xwin into TOOLS_DIR unless it is there."""
+    binary = TOOLS_DIR / "bin" / ("cargo-xwin" + (".exe" if os.name == "nt" else ""))
+    if binary.is_file():
+        installed = subprocess.run([binary, "xwin", "--version"], capture_output=True,
+                                   text=True).stdout.split()
+        if installed[-1:] == [CARGO_XWIN_VERSION]:
+            return
+    run(["cargo", "install", "--locked", "--quiet", "--force", "--root", TOOLS_DIR,
+         f"cargo-xwin@{CARGO_XWIN_VERSION}"], cwd=ROOT)
 
-    command = ["cmake", "--build", output]
+
+def build_env():
+    """Environment shared by every cargo invocation."""
+    env = dict(os.environ)
+    env["PATH"] = str(TOOLS_DIR / "bin") + os.pathsep + env.get("PATH", "")
+    env["XWIN_CACHE_DIR"] = str(XWIN_CACHE)
+    # Intermediate artifacts stay in ./target too, whatever build-dir a
+    # user's cargo config sets: --clean must really start from scratch, and
+    # objects built by some other toolchain (say, a system zig) must not
+    # end up in the binaries.
+    env["CARGO_BUILD_BUILD_DIR"] = str(TARGET_DIR)
+    env.update(XWIN_VERSIONS)
+    return env
+
+
+def rustflags_config(target):
+    """`--config` arguments adding to the target's rustflags.
+
+    Cargo merges these arrays with the ones in .cargo/config.toml (the static
+    CRT of the MSVC targets), whereas RUSTFLAGS would replace them. The path
+    remapping keeps the checkout and cargo home locations out of panic
+    messages, so the binaries do not depend on where they were built.
+    """
+    flags = [f"--remap-path-prefix={cargo_home()}=/cargo",
+             f"--remap-path-prefix={ROOT}=/src"]
+    triple = PLATFORMS[target]["triple"]
+    return ["--config", f"target.{triple}.rustflags={json.dumps(flags)}"]
+
+
+def build_one(target, debug=False, jobs=None):
+    """Cross compiles one platform; returns the path of the binary."""
+    info = PLATFORMS[target]
+    env = build_env()
+    if info["builder"] == "xwin":
+        ensure_cargo_xwin()
+        command = ["cargo", "xwin", "build"]
+    else:
+        command = ["cargo", "zigbuild"]
+    if "macos" in info:
+        env["MACOSX_DEPLOYMENT_TARGET"] = info["macos"]
+    command += ["--locked", "--target", info["triple"], "--target-dir", TARGET_DIR,
+                *rustflags_config(target)]
+    if not debug:
+        command.append("--release")
     if jobs:
-        command += ["--parallel", str(jobs)]
-    run(command)
-    run(["cmake", "--install", output, "--prefix", output / "install"])
-    return output
+        command += ["--jobs", str(jobs)]
+    # For Apple targets, the compiler version probe (`zig c++ --version`
+    # plus the -L arguments cargo-zigbuild adds) leaves an empty a.o in the
+    # build script's working directory, the checkout root. Only a file the
+    # build itself created is removed.
+    stray = ROOT / "a.o"
+    stray_existed = stray.exists()
+    run(command, cwd=ROOT, env=env)
+    if not stray_existed and stray.is_file() and stray.stat().st_size == 0:
+        stray.unlink()
+    binary = binary_path(target, "debug" if debug else "release")
+    if not binary.is_file():
+        sys.exit(f"dev.py: {binary} was not built")
+    return binary
 
 
 def selected_targets(args):
@@ -224,7 +288,7 @@ def collect_dist(dist_dir, url_base=None):
     dist_dir.mkdir(parents=True)
 
     for target in sorted(PLATFORMS):
-        source = build_dir(target, "Release", False) / "install" / "bin" / executable_name(target)
+        source = binary_path(target)
         if not source.is_file():
             sys.exit(f"dev.py: {source} was not built")
         destination = dist_dir / artifact_name(target)
@@ -265,24 +329,34 @@ def command_version(_args):
 def command_build(args):
     for target in selected_targets(args):
         print(f"\n== {target} ==", flush=True)
-        build_one(target, "Debug" if args.debug else "Release",
-                  jobs=args.jobs, clean=args.clean)
+        if args.clean:
+            shutil.rmtree(TARGET_DIR / PLATFORMS[target]["triple"], ignore_errors=True)
+        print(f"built {build_one(target, debug=args.debug, jobs=args.jobs)}", flush=True)
 
 
 def command_test(args):
-    target = host_platform()
-    output = build_one(target, "Debug" if args.debug else "Release", tests=True,
-                       jobs=args.jobs, clean=args.clean)
-    command = ["ctest", "--test-dir", output, "--output-on-failure"]
+    """Runs the test suites natively on the host.
+
+    The default test profile keeps debug assertions and integer overflow
+    checks enabled, so arithmetic bugs on crafted input fail loudly;
+    --release runs the same tests with the profile the binaries ship with.
+    """
+    if args.clean:
+        shutil.rmtree(TARGET_DIR, ignore_errors=True)
+    command = ["cargo", "test", "--locked", "--target-dir", TARGET_DIR]
+    if args.release:
+        command.append("--release")
     if args.jobs:
-        command += ["--parallel", str(args.jobs)]
-    run(command)
+        command += ["--jobs", str(args.jobs)]
+    run(command, cwd=ROOT, env=build_env())
 
 
 def command_dist(args):
+    if args.clean:
+        shutil.rmtree(TARGET_DIR, ignore_errors=True)
     for target in sorted(PLATFORMS):
         print(f"\n== {target} ==", flush=True)
-        build_one(target, "Release", jobs=args.jobs, clean=args.clean)
+        build_one(target, jobs=args.jobs)
     output = Path(args.output).resolve() if args.output else DIST_DIR
     print(f"\ncollecting into {output}", flush=True)
     collect_dist(output, args.url_base)
@@ -301,21 +375,24 @@ def command_repro(args):
     """Builds the dist twice, as differently as is practical, and compares.
 
     The first build is the regular one in this checkout. The second runs in a
-    copy of the working tree at another path, with its own deps extraction and
-    an empty zig cache, so that zig's runtime libraries (libc++, compiler-rt,
-    musl, mingw) are compiled afresh too. Only the downloaded dependency
-    archives are shared, which are hash-pinned anyway.
+    copy of the working tree at another path, with its own cargo target
+    directory and an empty zig cache, so that zig's runtime libraries
+    (libc++, compiler-rt, musl) are compiled afresh too. Only downloads are
+    shared: the crates (pinned by Cargo.lock checksums), cargo-xwin and the
+    pinned MSVC CRT/SDK.
     """
     command_dist(argparse.Namespace(jobs=args.jobs, clean=args.clean,
                                     output=None, url_base=None))
+    # The second build reuses this checkout's downloads.
+    ensure_cargo_xwin()
 
     scratch = Path(tempfile.mkdtemp(prefix="idt3-repro-"))
     copy = scratch / "checkout"
     for name in source_files():
         (copy / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, copy / name)
-    if DEPS_DOWNLOADS.is_dir():
-        shutil.copytree(DEPS_DOWNLOADS, copy / ".cache" / "deps" / "download")
+    for shared in (TOOLS_DIR, XWIN_CACHE):
+        shutil.copytree(shared, copy / shared.relative_to(ROOT), symlinks=True)
 
     env = dict(os.environ, **{
         PIXI_GUARD: "1",
@@ -352,7 +429,8 @@ def command_repro(args):
 
 
 def command_clean(_args):
-    for directory in (BUILD_ROOT, DIST_DIR):
+    # build/ is what the former CMake build left behind.
+    for directory in (TARGET_DIR, DIST_DIR, ROOT / "build"):
         print(f"removing {directory}", flush=True)
         shutil.rmtree(directory, ignore_errors=True)
 
@@ -362,13 +440,10 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    def add_common(subparser, debug=True):
+    def add_common(subparser):
         subparser.add_argument("-j", "--jobs", type=int, help="parallel build jobs")
         subparser.add_argument("--clean", action="store_true",
-                               help="discard the existing build directories first")
-        if debug:
-            subparser.add_argument("--debug", action="store_true",
-                                   help="debug build (zig traps on undefined behaviour)")
+                               help="discard the existing build output first")
 
     targets = subparsers.add_parser("targets", help="list the supported platforms")
     targets.set_defaults(func=command_targets, toolchain=False)
@@ -378,18 +453,22 @@ def main():
 
     build = subparsers.add_parser("build", help="cross compile for some platforms")
     add_common(build)
+    build.add_argument("--debug", action="store_true",
+                       help="unoptimized build with debug assertions and overflow checks")
     build.add_argument("-a", "--all", action="store_true", help="build every platform")
     build.add_argument("-t", "--target", action="append", metavar="PLATFORM",
                        help="platform to build (repeatable, default: the host)")
     build.set_defaults(func=command_build, toolchain=True)
 
-    test = subparsers.add_parser("test", help="build for the host and run the tests")
+    test = subparsers.add_parser("test", help="run the tests on the host")
     add_common(test)
+    test.add_argument("--release", action="store_true",
+                      help="test the release profile (no overflow checks)")
     test.set_defaults(func=command_test, toolchain=True)
 
     dist = subparsers.add_parser(
         "dist", help="release build of every platform, collected into ./dist")
-    add_common(dist, debug=False)
+    add_common(dist)
     dist.add_argument("-o", "--output", metavar="DIR",
                       help="collect into DIR instead of ./dist")
     dist.add_argument("--url-base", metavar="URL",
@@ -399,12 +478,12 @@ def main():
 
     repro = subparsers.add_parser(
         "repro", help="build the dist twice independently and compare the bytes")
-    add_common(repro, debug=False)
+    add_common(repro)
     repro.add_argument("--keep", action="store_true",
                        help="keep the second build even when it is identical")
     repro.set_defaults(func=command_repro, toolchain=True)
 
-    clean = subparsers.add_parser("clean", help="remove ./build and ./dist")
+    clean = subparsers.add_parser("clean", help="remove ./target and ./dist")
     clean.set_defaults(func=command_clean, toolchain=False)
 
     args = parser.parse_args()
