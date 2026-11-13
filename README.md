@@ -10,13 +10,54 @@ Written in C++11, built with CMake. Subcommands:
 
 ## Building
 
+### Release binaries for every platform
+
+[pixi](https://pixi.sh) provides zig, CMake, Ninja and Python. zig cross compiles every platform from any host pixi supports (Linux, macOS and Windows, x86_64 and arm64):
+
 ```sh
-cmake -S . -B build -G Ninja
-cmake --build build
-ctest --test-dir build
+pixi run dist          # all platforms, collected into ./dist
+pixi run test          # build for the host and run the tests
+pixi run test --debug  # ... as a debug build, which traps on undefined behaviour
+pixi run repro         # build everything twice and compare byte by byte
+pixi run dev --help    # all dev.py subcommands
 ```
 
-CMake downloads two pinned dependencies (hash-verified) at configure time:
+`./dev.py` works the same way and enters the pixi environment by itself when the tools are not on `PATH`. `./dev.py build -t windows-x86_64` builds a single platform into `build/<platform>-release`, and `./dev.py targets` lists them:
+
+| platform         | zig target                 | artifact                  |
+|------------------|----------------------------|---------------------------|
+| `linux-x86_64`   | `x86_64-linux-musl`        | `idt3-linux-x86_64`       |
+| `linux-arm64`    | `aarch64-linux-musl`       | `idt3-linux-arm64`        |
+| `macos-x86_64`   | `x86_64-macos.10.13-none`  | `idt3-macos-x86_64`       |
+| `macos-arm64`    | `aarch64-macos.11.0-none`  | `idt3-macos-arm64`        |
+| `windows-x86_64` | `x86_64-windows-gnu`       | `idt3-windows-x86_64.exe` |
+| `windows-arm64`  | `aarch64-windows-gnu`      | `idt3-windows-arm64.exe`  |
+
+The Linux binaries are fully static, the macOS ones only link `libSystem`, and the Windows ones only the system DLLs (Universal CRT and `KERNEL32`). All target the baseline instruction set of their CPU. The platform table lives in `cmake/targets.json` and is shared by `dev.py` and the CMake toolchain file.
+
+`dist` also writes `SHA256SUMS`. With `--url-base URL` it additionally writes `idt3.multitool.json`, a [rules_multitool](https://github.com/theoremlp/rules_multitool) lock file for binaries published under `URL`. The platform names are rules_multitool's `os`/`cpu` values.
+
+### Reproducibility
+
+Release builds are bit-for-bit reproducible: the same commit and the pinned pixi environment produce identical binaries regardless of the host, the checkout path or the state of the zig cache. No timestamps, build paths or debug info are embedded, and `pixi run repro` checks this by building a second time in a copy of the tree at another path with empty zig caches.
+
+The image output is reproducible too: floating point contraction is disabled and Compressonator's runtime SIMD dispatch is replaced by its portable code, so the same input and options give the same bytes on every platform and CPU.
+
+### CI and releases
+
+The `CI` workflow builds and tests every platform on `ubuntu-latest` and runs the reproducibility check. Started manually with `release` checked, it also publishes the binaries, `SHA256SUMS` and `idt3.multitool.json` as GitHub release `v<version>`, using the version in `CMakeLists.txt`. Assets are uploaded into a draft that is only published once all of them arrived intact, and deleted otherwise. An existing release is never overwritten.
+
+### With the host compiler
+
+Plain CMake works too, with any C++11 compiler, but without the guarantees above:
+
+```sh
+cmake -S . -B build/native -G Ninja
+cmake --build build/native
+ctest --test-dir build/native
+```
+
+CMake downloads two pinned dependencies (hash-verified) at configure time and extracts them into `.cache/deps`, which all build directories share:
 
 - [Compressonator](https://github.com/GPUOpen-Tools/compressonator) V4.6.0: only the `CMP_Core` block encoders/decoders are compiled, into a static library.
 - [stb](https://github.com/nothings/stb): `stb_image` (decoding) and `stb_image_write` (PNG/JPG/BMP).
@@ -24,11 +65,11 @@ CMake downloads two pinned dependencies (hash-verified) at configure time:
 For offline builds, point CMake at local checkouts:
 
 ```sh
-cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_COMPRESSONATOR=/path/to/compressonator \
-                    -DFETCHCONTENT_SOURCE_DIR_STB=/path/to/stb
+cmake -S . -B build/native -DFETCHCONTENT_SOURCE_DIR_COMPRESSONATOR=/path/to/compressonator \
+                           -DFETCHCONTENT_SOURCE_DIR_STB=/path/to/stb
 ```
 
-Options: `IDT3_BUILD_TESTS` (default `ON`), `IDT3_WARNINGS_AS_ERRORS` (default `OFF`).
+Options: `IDT3_BUILD_TESTS` (default `ON`), `IDT3_WARNINGS_AS_ERRORS` (default `OFF`), `IDT3_DEPS_CACHE` (default `.cache/deps`).
 
 ## `idt3 img`
 
