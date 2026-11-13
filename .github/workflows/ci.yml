@@ -21,8 +21,9 @@ permissions:
   contents: read
 
 jobs:
-  # zig cross compiles every platform from this one Linux runner, so there is
-  # no build matrix: all binaries come out of the same toolchain in one job.
+  # cargo-zigbuild (Linux, macOS) and cargo-xwin (Windows) cross compile every
+  # platform from this one Linux runner, so there is no build matrix: all
+  # binaries come out of the same toolchains in one job.
   build:
     runs-on: ubuntu-latest
     outputs:
@@ -41,28 +42,54 @@ jobs:
           locked: true
           cache: true
 
-      # The dependency archives are pinned by hash in cmake/Dependencies.cmake,
-      # so that file is the cache key.
-      - name: Cache dependency downloads
+      # Rust is not part of the pixi environment. rustup (preinstalled on the
+      # runner) installs the exact toolchain, components and cross targets
+      # that rust-toolchain.toml pins, instead of relying on the implicit
+      # install on first use.
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+          cargo --version
+
+      # dev.py pins both the cargo-xwin version it installs into .cache/tools
+      # and the MSVC CRT/Windows SDK versions xwin downloads into .cache/xwin,
+      # so dev.py itself is the cache key.
+      - name: Cache cargo-xwin and the MSVC CRT/SDK
         uses: actions/cache@v4
         with:
-          path: .cache/deps/download
-          key: deps-${{ hashFiles('cmake/Dependencies.cmake') }}
+          path: |
+            .cache/tools
+            .cache/xwin
+          key: xwin-${{ hashFiles('dev.py') }}
 
-      - name: Test (release)
+      # Only the downloaded crate archives and the registry index are cached;
+      # every crate is pinned by checksum in Cargo.lock.
+      - name: Cache crate downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+          key: crates-${{ hashFiles('Cargo.lock') }}
+
+      # The test profile keeps debug assertions and integer overflow checks,
+      # so arithmetic bugs on crafted input fail loudly.
+      - name: Test (debug assertions, overflow checks)
         run: pixi run test
 
-      # zig enables UBSan in debug builds, with traps instead of reports.
-      - name: Test (debug, UBSan)
-        run: pixi run test --debug
+      - name: Test (release profile)
+        run: pixi run test --release
 
       # Builds every platform here, then again in a copy of the tree at another
-      # path with empty zig caches, and fails unless both agree byte by byte.
+      # path with its own target directory and empty zig caches, and fails
+      # unless both agree byte by byte.
       - name: Reproducibility check
         run: pixi run repro
 
-      # Only re-collects the release builds from the previous step, now with
-      # the rules_multitool lock file pointing at the release download URLs.
+      # cargo finds the release builds from the previous step up to date, so
+      # this only re-collects them, now with the rules_multitool lock file
+      # pointing at the release download URLs.
       - name: Dist
         run: >-
           pixi run dist --url-base
@@ -103,18 +130,6 @@ jobs:
             dist/idt3tc.multitool.json
           if-no-files-found: error
 
-      # CMake only prints the outcome of its compiler checks; the compiler and
-      # linker output of every try_compile lands in these logs.
-      - name: Upload CMake logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cmake-logs
-          path: |
-            build/*/CMakeFiles/CMakeConfigureLog.yaml
-            build/*/CMakeCache.txt
-          if-no-files-found: ignore
-
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
     needs: build
@@ -142,7 +157,7 @@ jobs:
           sha256sum -c SHA256SUMS
 
       # Releases are immutable once published: a version that is out already
-      # needs a version bump in CMakeLists.txt, not an overwrite.
+      # needs a version bump in Cargo.toml, not an overwrite.
       - name: Check that the release does not exist
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
