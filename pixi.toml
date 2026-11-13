@@ -1,0 +1,13 @@
+[workspace]
+authors = ["Vorschreibung <vorschreibung@gmail.com>"]
+channels = ['conda-forge']
+name = "idt3tc"
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+zig = "*"
+cmake = "*"
+ninja = "*"
